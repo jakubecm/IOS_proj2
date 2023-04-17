@@ -5,10 +5,21 @@ Datum: 2023-04-16
 Projekt: 2. projekt do IOS (semafory)
 */
 
-#include "proj2.h"
+#include <limits.h>
+#include <semaphore.h>
+#include <stdarg.h>
+#include <sys/shm.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #define SEM_NAME "/xjakub41"
 
 sem_t *mutex;
+sem_t *zakaznik;
 sem_t *urednik;
 sem_t *rada1;
 sem_t *rada2;
@@ -27,7 +38,7 @@ struct shared_data{
 int shared_memory_id;
 struct shared_data *shared_data = NULL;
 
-int init_shared_mem(void){
+int init_shared_mem(){
     shared_memory_id = shmget(IPC_PRIVATE, sizeof(struct shared_data), IPC_CREAT | 0666);
 
     if(shared_memory_id == -1){
@@ -50,13 +61,14 @@ int init_shared_mem(void){
     return 0;
 }
 
-void clear_shared_mem(void){
+void clear_shared_mem(){
     shmdt(shared_data);
     shmctl(shared_memory_id, IPC_RMID, NULL);
 }
 
-void semaphore_init(void){
+void semaphore_init(){
     mutex = sem_open(SEM_NAME, O_CREAT, 0666, 1);
+    zakaznik = sem_open("xjakzakaznik", O_CREAT, 0666, 0);
     urednik = sem_open("xjakurednik", O_CREAT, 0666, 0);
     rada1 = sem_open("xjakrada1", O_CREAT, 0666, 0);
     rada2 = sem_open("xjakrada2", O_CREAT, 0666, 0);
@@ -64,14 +76,16 @@ void semaphore_init(void){
     logmafor = sem_open("xjaklogmafor", O_CREAT, 0666, 1);
 }
 
-void semaphore_clear(void){
+void semaphore_clear(){
     sem_close(mutex);
+    sem_close(zakaznik);
     sem_close(urednik);
     sem_close(rada1);
     sem_close(rada2);
     sem_close(rada3);
     sem_close(logmafor);
     sem_unlink(SEM_NAME);
+    sem_unlink("xjakzakaznik");
     sem_unlink("xjakurednik");
     sem_unlink("xjakrada1");
     sem_unlink("xjakrada2");
@@ -91,6 +105,11 @@ void custom_print(const char* fmt, ...) {
     shared_data->line_number++;
 
     sem_post(logmafor);
+}
+
+void amimir(uint32_t millis) {
+    uint32_t time = rand() % (millis + 1);
+    usleep(time * 1000);
 }
 
 // main slouzi jako hlavni proces
@@ -136,56 +155,44 @@ int main(int argc, char *argv[]){
         pid_t idZ = fork();
 
         if (idZ == 0){
-            srand(getpid()); // seed pro nahodne cislo
-            custom_print("A: Z %d: started\n", i);
-            usleep((rand() % (TZ + 1)) * 1000);
+            srand(getpid());
+            custom_print("A: Z %d: started", i);
+            amimir(TZ);
 
             if(shared_data->closed){
-                custom_print("A: Z %d: going home\n", i);
+                custom_print("A: Z %d: finished", i);
                 exit(0);
             }
 
-            int line = (rand() % 3) + 1; // nahodne cislo 1-3
+            int line = rand() % 3 + 1; // nahodne cislo 1-3
 
             if(line == 1){
-                custom_print("A: Z %d: entering office for a service %d\n", i, line);
-
-                sem_wait(mutex);
+                custom_print("A: Z %d: entering office for a service %d", i, line);
                 shared_data->rada1_state++;
-                sem_post(mutex);
-
                 sem_post(rada1);
             }
             else if(line == 2){
-                custom_print("A: Z %d: entering office for a service %d\n", i, line);
-
-                sem_wait(mutex);
+                custom_print("A: Z %d: entering office for a service %d", i, line);
                 shared_data->rada2_state++;
-                sem_post(mutex);
-
                 sem_post(rada2);                
             }
             else if(line == 3){
-                custom_print("A: Z %d: entering office for a service %d\n", i, line);
-
-                sem_wait(mutex);
+                custom_print("A: Z %d: entering office for a service %d", i, line);
                 shared_data->rada3_state++;
-                sem_post(mutex);
-
                 sem_post(rada3);            
             }
 
             sem_wait(urednik);
-            custom_print("A: Z %d: called by office worker\n", i);
-            usleep((rand() % (10 + 1)) * 1000);
-            custom_print("A: Z %d: going home\n", i);
+            custom_print("A: Z %d: called by office worker", i);
+            amimir(10);
+            custom_print("A: Z %d: going home", i);
             exit(0);
         }
     }
 
     // Vytvor NU procesu uredniku
 
-    for (int i = 1; i <= NU; i++){
+    for (int i = 1; i <= NZ; i++){
         pid_t idU = fork();
         if(idU == 0){
             srand(getpid());
@@ -193,9 +200,10 @@ int main(int argc, char *argv[]){
 
                 if(shared_data->rada1_state == 0 && shared_data->rada2_state == 0 && shared_data->rada3_state == 0)
                 {
-                    custom_print("A: U %d: taking break\n", i);
-                    usleep((rand() % (TU + 1)) * 1000);
-                    custom_print("A: U %d: break finished\n", i);
+                    custom_print("A: U %d: taking break", i);
+                    amimir(TU);
+                    custom_print("A: U %d: break finished", i);
+                    continue;
                 }
                 
                 int choice = rand() % 3 + 1;
@@ -203,63 +211,60 @@ int main(int argc, char *argv[]){
                 switch (choice){
                     case 1:
                         if(shared_data->rada1_state == 0) continue;
-                        custom_print("A: U %d: serving a service of type %d\n", i, choice);
-                        sem_wait(rada1);
+                        custom_print("A: U %d: serving a service of type %d", i, choice);
+                        sem_wait(zakaznik);
 
                         sem_wait(mutex);
                         shared_data->rada1_state--;
                         sem_post(mutex);
                         
-                        usleep((rand() % (10 + 1)) * 1000);
-                        custom_print("A: U %d: service finished\n", i);
+                        amimir(10);
+                        custom_print("A: U %d: service finished", i);
                         sem_post(urednik);
                         break;
 
                     case 2:
                         if(shared_data->rada2_state == 0) continue;
-                        custom_print("A: U %d: serving a service of type %d\n", i, choice);
-                        sem_wait(rada2);
+                        custom_print("A: U %d: serving a service of type %d", i, choice);
+                        sem_wait(zakaznik);
 
                         sem_wait(mutex);
                         shared_data->rada2_state--;
                         sem_post(mutex);
 
-                        usleep((rand() % (10 + 1)) * 1000);
-                        custom_print("A: U %d: service finished\n", i);
+                        amimir(10);
+                        custom_print("A: U %d: service finished", i);
                         sem_post(urednik);
                         break;
 
                     case 3:
                         if(shared_data->rada3_state == 0) continue;
-                        custom_print("A: U %d: serving a service of type %d\n", i, choice);
-                        sem_wait(rada3);
+                        custom_print("A: U %d: serving a service of type %d", i, choice);
+                        sem_wait(zakaznik);
 
                         sem_wait(mutex);
                         shared_data->rada3_state--;
                         sem_post(mutex);
 
-                        usleep((rand() % (10 + 1)) * 1000);
-                        custom_print("A: U %d: service finished\n", i);
+                        amimir(10);
+                        custom_print("A: U %d: service finished", i);
                         sem_post(urednik);
                         break;
                 }
             }
 
             if(shared_data->closed && shared_data->rada1_state == 0 && shared_data->rada2_state == 0 && shared_data->rada3_state == 0){
-                custom_print("A: U %d: going home\n", i);
+                custom_print("A: U %d: going home", i);
                 exit(0);
             }
+
         }
         
 
     }
     // Cekej pomoci volani usleep nahodny cas v intervalu <F/2, F>
-    srand(getpid());
-    usleep((rand() % (F/2) + F/2) * 1000);
 
     // Vypis A: closing
-    custom_print("A: closing\n");
-    shared_data->closed = true;
 
     // Pockej na ukonceni vsech procesu, ktere aplikace vytvari. Jakmile jsou ukonceny, ukonci sebe s kodem 0.
     while(wait(NULL) > 0);
