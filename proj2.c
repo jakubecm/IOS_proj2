@@ -64,13 +64,13 @@ void clear_shared_mem(void){
 }
 
 void semaphore_init(void){
-    mutex = sem_open(SEM_NAME, O_CREAT, 0666, 1);
-    urednik = sem_open("xjakurednik", O_CREAT, 0666, 0);
-    rada1 = sem_open("xjakrada1", O_CREAT, 0666, 0);
-    rada2 = sem_open("xjakrada2", O_CREAT, 0666, 0);
-    rada3 = sem_open("xjakrada3", O_CREAT, 0666, 0);
-    logmafor = sem_open("xjaklogmafor", O_CREAT, 0666, 1);
-    barrier = sem_open("xjakbarrier", O_CREAT, 0666, 0);
+    sem_init(mutex, 1, 1);
+    sem_init(urednik, 1, 0);
+    sem_init(rada1, 1, 0);
+    sem_init(rada2, 1, 0);
+    sem_init(rada3, 1, 0);
+    sem_init(logmafor, 1, 1);
+    sem_init(barrier, 1, 0);
 }
 
 void semaphore_clear(void){
@@ -288,7 +288,7 @@ int main(int argc, char *argv[]){
         }
         }
     }
- 
+    Barrier(NU, NZ);
     // Cekej pomoci volani usleep nahodny cas v intervalu <F/2, F>
     int range = F - F/2 + 1;
     usleep((rand() % range + F/2) * 1000);
