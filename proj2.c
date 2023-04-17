@@ -35,6 +35,7 @@ uint32_t *rada1_waiting;
 uint32_t *rada2_waiting;
 uint32_t *rada3_waiting;
 uint32_t *processes;
+bool *firstCycle;
 
 
 void semaphore_init(void){
@@ -85,6 +86,8 @@ void shared_items_init(){
     *rada3_waiting = 0;
     processes = mmap(NULL, sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     *processes = 0;
+    firstCycle = mmap(NULL, sizeof(bool), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+    *firstCycle = true;
 }
 
 void shared_items_clear(){
@@ -95,6 +98,7 @@ void shared_items_clear(){
     munmap(rada2_waiting, sizeof(uint32_t));
     munmap(rada3_waiting, sizeof(uint32_t));
     munmap(processes, sizeof(uint32_t));
+    munmap(firstCycle, sizeof(bool));
 }
 
 void custom_print(const char* fmt, ...) {
@@ -159,149 +163,178 @@ int main(int argc, char *argv[]){
     }
 
     // Vytvor NZ procesu zakazniku
-    for(int i = 1; i <= NZ; i++){
+    for (int i = 1; i <= NZ; i++)
+    {
         pid_t idZ = fork();
 
-        if(idZ == 0){
-        Barrier(NU, NZ);
-        srand(time(NULL) + i);
+        if (idZ == 0)
+        {
+            Barrier(NU, NZ);
+            srand(time(NULL) + i);
 
-        custom_print("Z %d: started\n", i);
-        usleep((rand() % TZ + 1) * 1000);
+            custom_print("Z %d: started\n", i);
+            usleep((rand() % TZ + 1) * 1000);
 
-        if((*closed) == true){
+            if ((*closed) == true)
+            {
+                custom_print("Z %d: going home\n", i);
+                exit(0);
+            }
+
+            int line = rand() % 3 + 1;
+            custom_print("Z %d: entering office for a service %d\n", i, line);
+
+            if (line == 1)
+            {
+                sem_wait(mutex);
+                (*rada1_waiting)++;
+                sem_post(mutex);
+
+                sem_post(rada1);
+            }
+            else if (line == 2)
+            {
+                sem_wait(mutex);
+                (*rada2_waiting)++;
+                sem_post(mutex);
+
+                sem_post(rada2);
+            }
+            else if (line == 3)
+            {
+                sem_wait(mutex);
+                (*rada3_waiting)++;
+                sem_post(mutex);
+
+                sem_post(rada3);
+            }
+
+            sem_wait(urednik);
+
+            custom_print("Z %d: called by office worker\n", i);
+            usleep((rand() % 11) * 1000);
+
             custom_print("Z %d: going home\n", i);
             exit(0);
         }
-
-        int line = rand() % 3 + 1;
-        custom_print("Z %d: entering office for a service %d\n", i, line);
-
-        if(line == 1){
-            sem_wait(mutex);
-            (*rada1_waiting)++;
-            sem_post(mutex);
-
-            sem_post(rada1);
-        }
-        else if(line == 2){
-            sem_wait(mutex);
-            (*rada2_waiting)++;
-            sem_post(mutex);
-
-            sem_post(rada2);
-        }
-        else if(line == 3){
-            sem_wait(mutex);
-            (*rada3_waiting)++;
-            sem_post(mutex);
-
-            sem_post(rada3);
-        }
-
-        sem_wait(urednik);
-
-        custom_print("Z %d: called by office worker\n", i);
-        usleep((rand() % 11) * 1000);
-
-        custom_print("Z %d: going home\n", i);
-        exit(0);
-        }
     }
-
 
     // Vytvor NU procesu uredniku
 
-    for(int i = 1; i <= NU; i++){
+    for (int i = 1; i <= NU; i++)
+    {
         pid_t idU = fork();
-        if(idU == 0){
-        Barrier(NU, NZ);
-        srand(time(NULL) + i + 2);
+        if (idU == 0)
+        {
+            Barrier(NU, NZ);
+            srand(time(NULL) + i + 2);
 
-        custom_print("U %d: started\n", i);
+            custom_print("U %d: started\n", i);
 
-        while(!(*closed) || (*rada1_waiting) != 0 || (*rada2_waiting) != 0 || (*rada3_waiting) != 0){
-
-            int choice = rand() % 3 + 1;
-            bool valid_choice = false;
-
-            while(!valid_choice){
-                if(choice == 1 && (*rada1_waiting) != 0){
-                    valid_choice = true;
-                }
-                else if(choice == 2 && (*rada2_waiting) != 0){
-                    valid_choice = true;
-                }
-                else if(choice == 3 && (*rada3_waiting) != 0){
-                    valid_choice = true;
-                }
-                else{
-                    choice = rand() % 3 + 1;
-                }
-            }
-
-            if(choice == 1){
-                sem_wait(mutex);
-                (*rada1_waiting)--;
-                sem_post(mutex);
-
-                sem_wait(rada1);
-                sem_post(urednik);
-                custom_print("U %d: serving a service of type %d\n", i, choice);
-                usleep((rand() % 11) * 1000);
-                custom_print("U %d: service finished\n", i);
-                
-            }
-            else if(choice == 2){
-                sem_wait(mutex);
-                (*rada2_waiting)--;
-                sem_post(mutex);
-
-                sem_wait(rada2);
-                sem_post(urednik);
-                custom_print("U %d: serving a service of type %d\n", i, choice);
-                usleep((rand() % 11) * 1000);
-                custom_print("U %d: service finished\n", i);
-                
-            }
-            else if(choice == 3){
-                sem_wait(mutex);
-                (*rada3_waiting)--;
-                sem_post(mutex);
-
-                sem_wait(rada3);
-                sem_post(urednik);
-                custom_print("U %d: serving a service of type %d\n", i, choice);
-                usleep((rand() % 11) * 1000);
-                custom_print("U %d: service finished\n", i);
-                
-            }
-
-            if ((*rada1_waiting) == 0 && (*rada2_waiting) == 0 && (*rada3_waiting) == 0)
+            while (((*closed) == false) || ((*rada1_waiting) != 0) || ((*rada2_waiting) != 0) || ((*rada3_waiting) != 0))
             {
-                if(closed){
-                    custom_print("U %d: going home\n", i);
-                    exit(0);
+                if ((*rada1_waiting) == 0 && (*rada2_waiting) == 0 && (*rada3_waiting) == 0)
+                {
+                    if ((*closed) == true)
+                    {
+                        custom_print("U %d: going home\n", i);
+                        exit(0);
+                    }
+                    
+                    custom_print("U %d: taking break\n", i);
+                    usleep((rand() % TU + 1) * 1000);
+                    custom_print("U %d: break finished\n", i);
+                    
                 }
-                custom_print("A: U %d: taking break\n", i);
-                usleep((rand() % TU + 1) * 1000);
-                custom_print("A: U %d: break finished\n", i);
+
+                int choice = rand() % 3 + 1;
+                bool valid_choice = false;
+
+                while (!valid_choice)
+                {
+                    if (choice == 1 && (*rada1_waiting) > 0)
+                    {
+                        valid_choice = true;
+                        break;
+                    }
+                    else if (choice == 2 && (*rada2_waiting) > 0)
+                    {
+                        valid_choice = true;
+                        break;
+                    }
+                    else if (choice == 3 && (*rada3_waiting) > 0)
+                    {
+                        valid_choice = true;
+                        break;
+                    }
+                    else
+                    {
+                        choice = rand() % 3 + 1;
+
+                        if((*closed) == true){
+
+                            choice = 0;
+                            break;
+                        }
+                    }
+                }
+
+                if (choice == 1)
+                {
+                    sem_wait(mutex);
+                    (*rada1_waiting)--;
+                    sem_post(mutex);
+
+                    sem_wait(rada1);
+                    sem_post(urednik);
+
+                    custom_print("U %d: serving a service of type %d\n", i, choice);
+                    usleep((rand() % 11) * 1000);
+                    custom_print("U %d: service finished\n", i);
+                }
+                else if (choice == 2)
+                {
+                    sem_wait(mutex);
+                    (*rada2_waiting)--;
+                    sem_post(mutex);
+
+                    sem_wait(rada2);
+                    sem_post(urednik);
+
+                    custom_print("U %d: serving a service of type %d\n", i, choice);
+                    usleep((rand() % 11) * 1000);
+                    custom_print("U %d: service finished\n", i);
+                }
+                else if (choice == 3)
+                {
+                    sem_wait(mutex);
+                    (*rada3_waiting)--;
+                    sem_post(mutex);
+
+                    sem_wait(rada3);
+                    sem_post(urednik);
+
+                    custom_print("U %d: serving a service of type %d\n", i, choice);
+                    usleep((rand() % 11) * 1000);
+                    custom_print("U %d: service finished\n", i);
+                }
             }
-        }
+
+            custom_print("U %d: going home\n", i);
+            exit(0);
         }
     }
     Barrier(NU, NZ);
     // Cekej pomoci volani usleep nahodny cas v intervalu <F/2, F>
-    int range = F - F/2 + 1;
-    usleep((rand() % range + F/2) * 1000);
+    int range = F - F / 2 + 1;
+    usleep((rand() % range + F / 2) * 1000);
     // Vypis A: closing
     custom_print("A: closing\n");
-    *closed = true;
+    (*closed) = true;
 
     // Pockej na ukonceni vsech procesu, ktere aplikace vytvari. Jakmile jsou ukonceny, ukonci sebe s kodem 0.
-    while(wait(NULL) > 0);
+    while (wait(NULL) > 0);
     shared_items_clear();
     semaphore_clear();
     exit(0);
 }
-
