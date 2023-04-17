@@ -72,6 +72,7 @@ void semaphore_clear(void){
 }
 
 void shared_items_init(){
+    outputStream = mmap(NULL, sizeof(FILE), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     closed = mmap(NULL, sizeof(bool), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     *closed = false;
     line_number = mmap(NULL, sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
@@ -105,7 +106,7 @@ void custom_print(const char* fmt, ...) {
     vfprintf(outputStream, fmt, arg);
     va_end(arg);
     fflush(outputStream);
-    line_number++;
+    (*line_number)++;
 
     sem_post(logmafor);
 }
@@ -113,7 +114,7 @@ void custom_print(const char* fmt, ...) {
 void Barrier(int NU, int NZ){
 
     sem_wait(mutex);
-    processes++;
+    (*processes)++;
     sem_post(mutex);
 
     if ((*processes) == (uint32_t)(NU + NZ + 1)){
@@ -131,6 +132,9 @@ int main(int argc, char *argv[]){
         fprintf(stderr, "Wrong number of arguments.\n");
         return 1;
     }
+
+    shared_items_init();
+    semaphore_init();
 
     outputStream = fopen("proj2.out", "w");
 
@@ -154,9 +158,6 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
-    shared_items_init();
-    semaphore_init();
-
     // Vytvor NZ procesu zakazniku
     for(int i = 1; i <= NZ; i++){
         pid_t idZ = fork();
@@ -168,7 +169,7 @@ int main(int argc, char *argv[]){
         custom_print("Z %d: started\n", i);
         usleep((rand() % TZ + 1) * 1000);
 
-        if(closed){
+        if((*closed) == true){
             custom_print("Z %d: going home\n", i);
             exit(0);
         }
@@ -219,19 +220,19 @@ int main(int argc, char *argv[]){
 
         custom_print("U %d: started\n", i);
 
-        while(!closed || rada1_waiting != 0 || rada2_waiting != 0 || rada3_waiting != 0){
+        while(!(*closed) || (*rada1_waiting) != 0 || (*rada2_waiting) != 0 || (*rada3_waiting) != 0){
 
             int choice = rand() % 3 + 1;
             bool valid_choice = false;
 
             while(!valid_choice){
-                if(choice == 1 && rada1_waiting != 0){
+                if(choice == 1 && (*rada1_waiting) != 0){
                     valid_choice = true;
                 }
-                else if(choice == 2 && rada2_waiting != 0){
+                else if(choice == 2 && (*rada2_waiting) != 0){
                     valid_choice = true;
                 }
-                else if(choice == 3 && rada3_waiting != 0){
+                else if(choice == 3 && (*rada3_waiting) != 0){
                     valid_choice = true;
                 }
                 else{
@@ -245,10 +246,11 @@ int main(int argc, char *argv[]){
                 sem_post(mutex);
 
                 sem_wait(rada1);
+                sem_post(urednik);
                 custom_print("U %d: serving a service of type %d\n", i, choice);
                 usleep((rand() % 11) * 1000);
                 custom_print("U %d: service finished\n", i);
-                sem_post(urednik);
+                
             }
             else if(choice == 2){
                 sem_wait(mutex);
@@ -256,10 +258,11 @@ int main(int argc, char *argv[]){
                 sem_post(mutex);
 
                 sem_wait(rada2);
+                sem_post(urednik);
                 custom_print("U %d: serving a service of type %d\n", i, choice);
                 usleep((rand() % 11) * 1000);
                 custom_print("U %d: service finished\n", i);
-                sem_post(urednik);
+                
             }
             else if(choice == 3){
                 sem_wait(mutex);
@@ -267,10 +270,11 @@ int main(int argc, char *argv[]){
                 sem_post(mutex);
 
                 sem_wait(rada3);
+                sem_post(urednik);
                 custom_print("U %d: serving a service of type %d\n", i, choice);
                 usleep((rand() % 11) * 1000);
                 custom_print("U %d: service finished\n", i);
-                sem_post(urednik);
+                
             }
 
             if ((*rada1_waiting) == 0 && (*rada2_waiting) == 0 && (*rada3_waiting) == 0)
