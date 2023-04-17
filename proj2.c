@@ -5,8 +5,19 @@ Datum: 2023-04-16
 Projekt: 2. projekt do IOS (semafory)
 */
 
-#include "proj2.h"
-#define SEM_NAME "/xjakub41"
+#include <limits.h>
+#include <semaphore.h>
+#include <stdarg.h>
+#include <sys/shm.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/mman.h>
 
 sem_t *mutex;
 sem_t *urednik;
@@ -16,79 +27,73 @@ sem_t *rada3;
 sem_t *logmafor;
 sem_t *barrier;
 
-struct shared_data{
-    FILE  *outputStream;
-    bool closed;
-    uint32_t line_number;
-    uint32_t rada1_waiting;
-    uint32_t rada2_waiting;
-    uint32_t rada3_waiting;
-    uint32_t processes;
-};
 
-int shared_memory_id;
-struct shared_data *shared_data = NULL;
+FILE  *outputStream;
+bool *closed;
+uint32_t *line_number;
+uint32_t *rada1_waiting;
+uint32_t *rada2_waiting;
+uint32_t *rada3_waiting;
+uint32_t *processes;
 
-void detach_shared_mem(void){
-    shmdt(shared_data);
-}
-
-int init_shared_mem(void){
-    shared_memory_id = shmget(IPC_PRIVATE, sizeof(struct shared_data), IPC_CREAT | 0666);
-
-    if(shared_memory_id == -1){
-        return 1;
-    }
-
-    shared_data = shmat(shared_memory_id, NULL, 0);
-
-    if(shared_data == (void *) -1){
-        shmctl(shared_memory_id, IPC_RMID, NULL);
-        return 1;
-    }
-
-    atexit(detach_shared_mem);
-
-    shared_data->line_number = 1;
-    shared_data->closed = false;
-    shared_data->rada1_waiting = 0;
-    shared_data->rada2_waiting = 0;
-    shared_data->rada3_waiting = 0;
-    shared_data->processes = 0;
-
-    return 0;
-}
-
-void clear_shared_mem(void){
-    shmctl(shared_memory_id, IPC_RMID, NULL);
-}
 
 void semaphore_init(void){
+    mutex = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     sem_init(mutex, 1, 1);
+    urednik = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     sem_init(urednik, 1, 0);
+    rada1 = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     sem_init(rada1, 1, 0);
+    rada2 = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     sem_init(rada2, 1, 0);
+    rada3 = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     sem_init(rada3, 1, 0);
+    logmafor = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     sem_init(logmafor, 1, 1);
+    barrier = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     sem_init(barrier, 1, 0);
 }
 
 void semaphore_clear(void){
-    sem_close(mutex);
-    sem_close(urednik);
-    sem_close(rada1);
-    sem_close(rada2);
-    sem_close(rada3);
-    sem_close(logmafor);
-    sem_close(barrier);
-    sem_unlink(SEM_NAME);
-    sem_unlink("xjakurednik");
-    sem_unlink("xjakrada1");
-    sem_unlink("xjakrada2");
-    sem_unlink("xjakrada3");
-    sem_unlink("xjaklogmafor");
-    sem_unlink("xjakbarrier");
-    
+    munmap(mutex, sizeof(sem_t));
+    sem_destroy(mutex);
+    munmap(urednik, sizeof(sem_t));
+    sem_destroy(urednik);
+    munmap(rada1, sizeof(sem_t));
+    sem_destroy(rada1);
+    munmap(rada2, sizeof(sem_t));
+    sem_destroy(rada2);
+    munmap(rada3, sizeof(sem_t));
+    sem_destroy(rada3);
+    munmap(logmafor, sizeof(sem_t));
+    sem_destroy(logmafor);
+    munmap(barrier, sizeof(sem_t));
+    sem_destroy(barrier);
+}
+
+void shared_items_init(){
+    closed = mmap(NULL, sizeof(bool), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+    *closed = false;
+    line_number = mmap(NULL, sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+    *line_number = 1;
+    rada1_waiting = mmap(NULL, sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+    *rada1_waiting = 0;
+    rada2_waiting = mmap(NULL, sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+    *rada2_waiting = 0;
+    rada3_waiting = mmap(NULL, sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+    *rada3_waiting = 0;
+    processes = mmap(NULL, sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+    *processes = 0;
+}
+
+void shared_items_clear(){
+    munmap(outputStream, sizeof(FILE));
+    munmap(closed, sizeof(bool));
+    munmap(line_number, sizeof(uint32_t));
+    munmap(rada1_waiting, sizeof(uint32_t));
+    munmap(rada2_waiting, sizeof(uint32_t));
+    munmap(rada3_waiting, sizeof(uint32_t));
+    munmap(processes, sizeof(uint32_t));
 }
 
 void custom_print(const char* fmt, ...) {
@@ -96,11 +101,11 @@ void custom_print(const char* fmt, ...) {
 
     va_list arg;
     va_start(arg, fmt);
-    fprintf(shared_data->outputStream, "%d: ", shared_data->line_number);
-    vfprintf(shared_data->outputStream, fmt, arg);
+    fprintf(outputStream, "%d: ", *line_number);
+    vfprintf(outputStream, fmt, arg);
     va_end(arg);
-    fflush(shared_data->outputStream);
-    shared_data->line_number++;
+    fflush(outputStream);
+    line_number++;
 
     sem_post(logmafor);
 }
@@ -108,10 +113,10 @@ void custom_print(const char* fmt, ...) {
 void Barrier(int NU, int NZ){
 
     sem_wait(mutex);
-    shared_data->processes++;
+    processes++;
     sem_post(mutex);
 
-    if (shared_data->processes == (uint32_t)(NU + NZ + 1)){
+    if ((*processes) == (uint32_t)(NU + NZ + 1)){
         sem_post(barrier);
     }
 
@@ -127,18 +132,11 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
-    if(init_shared_mem() != 0){
-        fprintf(stderr, "Error: Unable to initialize shared memory.\n");
-        clear_shared_mem();
-        return 1;
-    }
+    outputStream = fopen("proj2.out", "w");
 
-    shared_data->outputStream = fopen("proj2.out", "w");
-
-    if(!shared_data->outputStream){
+    if(!outputStream){
         fprintf(stderr, "Error: Unable to open output file.\n");
-        fclose(shared_data->outputStream);
-        clear_shared_mem();
+        fclose(outputStream);
         return 1;
     }
 
@@ -152,11 +150,11 @@ int main(int argc, char *argv[]){
     if (!(TZ >= 0 && TZ <= 10000) || !(TU >= 0 && TU <= 100) || !(F >= 0 && F <= 10000))
     {
         fprintf(stderr, "Error: Range/s of the given argument/s wrong.\n");
-        fclose(shared_data->outputStream);
-        clear_shared_mem();
+        fclose(outputStream);
         return 1;
     }
 
+    shared_items_init();
     semaphore_init();
 
     // Vytvor NZ procesu zakazniku
@@ -170,7 +168,7 @@ int main(int argc, char *argv[]){
         custom_print("Z %d: started\n", i);
         usleep((rand() % TZ + 1) * 1000);
 
-        if(shared_data->closed){
+        if(closed){
             custom_print("Z %d: going home\n", i);
             exit(0);
         }
@@ -180,21 +178,21 @@ int main(int argc, char *argv[]){
 
         if(line == 1){
             sem_wait(mutex);
-            shared_data->rada1_waiting++;
+            (*rada1_waiting)++;
             sem_post(mutex);
 
             sem_post(rada1);
         }
         else if(line == 2){
             sem_wait(mutex);
-            shared_data->rada2_waiting++;
+            (*rada2_waiting)++;
             sem_post(mutex);
 
             sem_post(rada2);
         }
         else if(line == 3){
             sem_wait(mutex);
-            shared_data->rada3_waiting++;
+            (*rada3_waiting)++;
             sem_post(mutex);
 
             sem_post(rada3);
@@ -221,19 +219,19 @@ int main(int argc, char *argv[]){
 
         custom_print("U %d: started\n", i);
 
-        while(!shared_data->closed || shared_data->rada1_waiting != 0 || shared_data->rada2_waiting != 0 || shared_data->rada3_waiting != 0){
+        while(!closed || rada1_waiting != 0 || rada2_waiting != 0 || rada3_waiting != 0){
 
             int choice = rand() % 3 + 1;
             bool valid_choice = false;
 
             while(!valid_choice){
-                if(choice == 1 && shared_data->rada1_waiting != 0){
+                if(choice == 1 && rada1_waiting != 0){
                     valid_choice = true;
                 }
-                else if(choice == 2 && shared_data->rada2_waiting != 0){
+                else if(choice == 2 && rada2_waiting != 0){
                     valid_choice = true;
                 }
-                else if(choice == 3 && shared_data->rada3_waiting != 0){
+                else if(choice == 3 && rada3_waiting != 0){
                     valid_choice = true;
                 }
                 else{
@@ -243,7 +241,7 @@ int main(int argc, char *argv[]){
 
             if(choice == 1){
                 sem_wait(mutex);
-                shared_data->rada1_waiting--;
+                (*rada1_waiting)--;
                 sem_post(mutex);
 
                 sem_wait(rada1);
@@ -254,7 +252,7 @@ int main(int argc, char *argv[]){
             }
             else if(choice == 2){
                 sem_wait(mutex);
-                shared_data->rada2_waiting--;
+                (*rada2_waiting)--;
                 sem_post(mutex);
 
                 sem_wait(rada2);
@@ -265,7 +263,7 @@ int main(int argc, char *argv[]){
             }
             else if(choice == 3){
                 sem_wait(mutex);
-                shared_data->rada3_waiting--;
+                (*rada3_waiting)--;
                 sem_post(mutex);
 
                 sem_wait(rada3);
@@ -275,9 +273,9 @@ int main(int argc, char *argv[]){
                 sem_post(urednik);
             }
 
-            if (shared_data->rada1_waiting == shared_data->rada2_waiting == shared_data->rada3_waiting == 0)
+            if ((*rada1_waiting) == 0 && (*rada2_waiting) == 0 && (*rada3_waiting) == 0)
             {
-                if(shared_data->closed){
+                if(closed){
                     custom_print("U %d: going home\n", i);
                     exit(0);
                 }
@@ -294,12 +292,12 @@ int main(int argc, char *argv[]){
     usleep((rand() % range + F/2) * 1000);
     // Vypis A: closing
     custom_print("A: closing\n");
-    shared_data->closed = true;
+    *closed = true;
 
     // Pockej na ukonceni vsech procesu, ktere aplikace vytvari. Jakmile jsou ukonceny, ukonci sebe s kodem 0.
     while(wait(NULL) > 0);
+    shared_items_clear();
     semaphore_clear();
-    clear_shared_mem();
     exit(0);
 }
 
