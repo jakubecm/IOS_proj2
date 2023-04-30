@@ -20,6 +20,7 @@ Projekt: 2. projekt do IOS (semafory)
 #include <sys/mman.h>
 
 sem_t *mutex;
+sem_t *postMutex;
 sem_t *urednik;
 sem_t *rada1;
 sem_t *rada2;
@@ -35,12 +36,13 @@ uint32_t *rada1_waiting;
 uint32_t *rada2_waiting;
 uint32_t *rada3_waiting;
 uint32_t *processes;
-bool *firstCycle;
 
 
 void semaphore_init(void){
     mutex = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     sem_init(mutex, 1, 1);
+    postMutex = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+    sem_init(postMutex, 1, 1);
     urednik = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     sem_init(urednik, 1, 0);
     rada1 = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
@@ -58,6 +60,8 @@ void semaphore_init(void){
 void semaphore_clear(void){
     munmap(mutex, sizeof(sem_t));
     sem_destroy(mutex);
+    munmap(postMutex, sizeof(sem_t));
+    sem_destroy(postMutex);
     munmap(urednik, sizeof(sem_t));
     sem_destroy(urednik);
     munmap(rada1, sizeof(sem_t));
@@ -86,8 +90,6 @@ void shared_items_init(){
     *rada3_waiting = 0;
     processes = mmap(NULL, sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     *processes = 0;
-    firstCycle = mmap(NULL, sizeof(bool), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
-    *firstCycle = true;
 }
 
 void shared_items_clear(){
@@ -98,7 +100,6 @@ void shared_items_clear(){
     munmap(rada2_waiting, sizeof(uint32_t));
     munmap(rada3_waiting, sizeof(uint32_t));
     munmap(processes, sizeof(uint32_t));
-    munmap(firstCycle, sizeof(bool));
 }
 
 void custom_print(const char* fmt, ...) {
@@ -175,14 +176,19 @@ int main(int argc, char *argv[]){
             custom_print("Z %d: started\n", i);
             usleep((rand() % TZ + 1) * 1000);
 
+            sem_wait(postMutex);
             if ((*closed) == true)
             {
+                sem_post(postMutex);
                 custom_print("Z %d: going home\n", i);
                 exit(0);
             }
+            sem_post(postMutex);
 
             int line = rand() % 3 + 1;
+            
             custom_print("Z %d: entering office for a service %d\n", i, line);
+            
 
             if (line == 1)
             {
@@ -233,53 +239,62 @@ int main(int argc, char *argv[]){
 
             while (((*closed) == false) || ((*rada1_waiting) != 0) || ((*rada2_waiting) != 0) || ((*rada3_waiting) != 0))
             {
-                if ((*rada1_waiting) == 0 && (*rada2_waiting) == 0 && (*rada3_waiting) == 0)
-                {
-                    if ((*closed) == true)
-                    {
-                        custom_print("U %d: going home\n", i);
-                        exit(0);
-                    }
-                    
-                    custom_print("U %d: taking break\n", i);
-                    usleep((rand() % TU + 1) * 1000);
-                    custom_print("U %d: break finished\n", i);
-                    
-                }
-
                 int choice = rand() % 3 + 1;
                 bool valid_choice = false;
 
+                sem_wait(mutex);
                 while (!valid_choice)
                 {
                     if (choice == 1 && (*rada1_waiting) > 0)
                     {
                         valid_choice = true;
-                        break;
+                        sem_post(mutex);
                     }
                     else if (choice == 2 && (*rada2_waiting) > 0)
                     {
                         valid_choice = true;
-                        break;
+                        sem_post(mutex);
                     }
                     else if (choice == 3 && (*rada3_waiting) > 0)
                     {
                         valid_choice = true;
-                        break;
+                        sem_post(mutex);
                     }
                     else
                     {
                         choice = rand() % 3 + 1;
+                        sem_post(mutex);
 
-                        if((*closed) == true){
-
+                        if ((*rada1_waiting) == 0 && (*rada2_waiting) == 0 && (*rada3_waiting) == 0)
+                        {
                             choice = 0;
+                            sem_post(mutex);
                             break;
                         }
                     }
                 }
+                
+                if (choice == 0)
+                {
+                    sem_wait(postMutex);
+                    if ((*closed) == false)
+                    {
+                        custom_print("U %d: taking break\n", i);
+                        sem_post(postMutex);
+                        if(TU != 0)
+                        {
+                            usleep((rand() % TU + 1) * 1000);
+                        }
+                        custom_print("U %d: break finished\n", i);
+                    }
+                    else
+                    {
+                        sem_post(postMutex);
+                        break;
+                    } 
+                }
 
-                if (choice == 1)
+                else if (choice == 1)
                 {
                     sem_wait(mutex);
                     (*rada1_waiting)--;
@@ -318,6 +333,7 @@ int main(int argc, char *argv[]){
                     usleep((rand() % 11) * 1000);
                     custom_print("U %d: service finished\n", i);
                 }
+
             }
 
             custom_print("U %d: going home\n", i);
@@ -328,12 +344,16 @@ int main(int argc, char *argv[]){
     // Cekej pomoci volani usleep nahodny cas v intervalu <F/2, F>
     int range = F - F / 2 + 1;
     usleep((rand() % range + F / 2) * 1000);
-    // Vypis A: closing
-    custom_print("A: closing\n");
-    (*closed) = true;
 
+    // Vypis A: closing
+    sem_wait(postMutex);
+    custom_print("closing\n");
+    (*closed) = true;
+    sem_post(postMutex);
+    
     // Pockej na ukonceni vsech procesu, ktere aplikace vytvari. Jakmile jsou ukonceny, ukonci sebe s kodem 0.
     while (wait(NULL) > 0);
+    fclose(outputStream);
     shared_items_clear();
     semaphore_clear();
     exit(0);
