@@ -15,4 +15,4 @@ clean:
 	rm -f proj2
 
 pack:
-	zip xjakub41.zip proj2.c proj2.h Makefile
+	zip proj2.zip proj2.c Makefile
