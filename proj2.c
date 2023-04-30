@@ -78,6 +78,7 @@ void semaphore_clear(void){
 
 void shared_items_init(){
     outputStream = mmap(NULL, sizeof(FILE), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+    outputStream = fopen("proj2.out", "w");
     closed = mmap(NULL, sizeof(bool), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     *closed = false;
     line_number = mmap(NULL, sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
@@ -93,6 +94,7 @@ void shared_items_init(){
 }
 
 void shared_items_clear(){
+    fclose(outputStream);
     munmap(outputStream, sizeof(FILE));
     munmap(closed, sizeof(bool));
     munmap(line_number, sizeof(uint32_t));
@@ -141,11 +143,10 @@ int main(int argc, char *argv[]){
     shared_items_init();
     semaphore_init();
 
-    outputStream = fopen("proj2.out", "w");
-
     if(!outputStream){
         fprintf(stderr, "Error: Unable to open output file.\n");
-        fclose(outputStream);
+        semaphore_clear();
+        shared_items_clear();
         return 1;
     }
 
@@ -159,7 +160,8 @@ int main(int argc, char *argv[]){
     if (!(TZ >= 0 && TZ <= 10000) || !(TU >= 0 && TU <= 100) || !(F >= 0 && F <= 10000))
     {
         fprintf(stderr, "Error: Range/s of the given argument/s wrong.\n");
-        fclose(outputStream);
+        semaphore_clear();
+        shared_items_clear();
         return 1;
     }
 
@@ -177,17 +179,19 @@ int main(int argc, char *argv[]){
             usleep((rand() % TZ + 1) * 1000);
 
             sem_wait(postMutex);
+
             if ((*closed) == true)
             {
                 sem_post(postMutex);
                 custom_print("Z %d: going home\n", i);
+                fclose(outputStream);
                 exit(0);
             }
-            sem_post(postMutex);
-
+    
             int line = rand() % 3 + 1;
-            
             custom_print("Z %d: entering office for a service %d\n", i, line);
+
+            sem_post(postMutex);
             
 
             if (line == 1)
@@ -221,6 +225,7 @@ int main(int argc, char *argv[]){
             usleep((rand() % 11) * 1000);
 
             custom_print("Z %d: going home\n", i);
+            fclose(outputStream);
             exit(0);
         }
     }
@@ -337,6 +342,7 @@ int main(int argc, char *argv[]){
             }
 
             custom_print("U %d: going home\n", i);
+            fclose(outputStream);
             exit(0);
         }
     }
@@ -353,7 +359,6 @@ int main(int argc, char *argv[]){
     
     // Pockej na ukonceni vsech procesu, ktere aplikace vytvari. Jakmile jsou ukonceny, ukonci sebe s kodem 0.
     while (wait(NULL) > 0);
-    fclose(outputStream);
     shared_items_clear();
     semaphore_clear();
     exit(0);
