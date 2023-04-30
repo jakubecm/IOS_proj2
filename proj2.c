@@ -5,6 +5,8 @@ Datum: 2023-04-16
 Projekt: 2. projekt do IOS (semafory)
 */
 
+
+// Includy
 #include <limits.h>
 #include <semaphore.h>
 #include <stdarg.h>
@@ -19,6 +21,7 @@ Projekt: 2. projekt do IOS (semafory)
 #include <sys/types.h>
 #include <sys/mman.h>
 
+// Semafory pro program
 sem_t *mutex;
 sem_t *postMutex;
 sem_t *urednik;
@@ -28,7 +31,7 @@ sem_t *rada3;
 sem_t *logmafor;
 sem_t *barrier;
 
-
+// Promenne pro sdilenou pamet
 FILE  *outputStream;
 bool *closed;
 uint32_t *line_number;
@@ -37,7 +40,7 @@ uint32_t *rada2_waiting;
 uint32_t *rada3_waiting;
 uint32_t *processes;
 
-
+// Funkce pro inicializaci semaforu do sdilene pameti a inicializace semaforu na pocatecni hodnoty
 void semaphore_init(void){
     mutex = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     sem_init(mutex, 1, 1);
@@ -57,6 +60,7 @@ void semaphore_init(void){
     sem_init(barrier, 1, 0);
 }
 
+// Funkce pro uvolneni semaforu ze sdilene pameti a jejich zruseni
 void semaphore_clear(void){
     munmap(mutex, sizeof(sem_t));
     sem_destroy(mutex);
@@ -76,6 +80,7 @@ void semaphore_clear(void){
     sem_destroy(barrier);
 }
 
+// Funkce pro inicializaci promennych do sdilene pameti
 void shared_items_init(){
     outputStream = mmap(NULL, sizeof(FILE), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
     outputStream = fopen("proj2.out", "w");
@@ -93,6 +98,7 @@ void shared_items_init(){
     *processes = 0;
 }
 
+// Funkce pro uvolneni promennych ze sdilene pameti
 void shared_items_clear(){
     fclose(outputStream);
     munmap(outputStream, sizeof(FILE));
@@ -104,6 +110,7 @@ void shared_items_clear(){
     munmap(processes, sizeof(uint32_t));
 }
 
+// Funkce na tisknuti outputu do proj2.out souboru s mutexem
 void custom_print(const char* fmt, ...) {
     sem_wait(logmafor);
 
@@ -118,6 +125,7 @@ void custom_print(const char* fmt, ...) {
     sem_post(logmafor);
 }
 
+// Implementace bariery podle knihy, slouzi k pockani na vsechny procesy pri spousteni
 void Barrier(int NU, int NZ){
 
     sem_wait(mutex);
@@ -143,6 +151,15 @@ int main(int argc, char *argv[]){
     shared_items_init();
     semaphore_init();
 
+    if(mutex == MAP_FAILED || postMutex == MAP_FAILED || urednik == MAP_FAILED || rada1 == MAP_FAILED
+     || rada2 == MAP_FAILED || rada3 == MAP_FAILED || logmafor == MAP_FAILED || barrier == MAP_FAILED)
+    {
+        fprintf(stderr, "Chyba pri alokaci semaforu\n");
+        semaphore_clear();
+        shared_items_clear();
+        exit(1);
+    }
+
     if(!outputStream){
         fprintf(stderr, "Error: Unable to open output file.\n");
         semaphore_clear();
@@ -150,7 +167,7 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
-    // Promenne pro procesy
+    // Promenne pro procesy, parsing argumentu
     int NZ = strtol(argv[1], NULL, 10); // Pocet zakazniku
     int NU = strtol(argv[2], NULL, 10); // Pocet uredniku
     int TZ = strtol(argv[3], NULL, 10); // Maximalni doba cekani zakaznika v milisekundach
@@ -165,7 +182,7 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
-    // Vytvor NZ procesu zakazniku
+    // Vytvoreni NZ procesu zakazniku
     for (int i = 1; i <= NZ; i++)
     {
         pid_t idZ = fork();
@@ -176,10 +193,10 @@ int main(int argc, char *argv[]){
             srand(time(NULL) + i);
 
             custom_print("Z %d: started\n", i);
-            usleep((rand() % TZ + 1) * 1000);
+            usleep((rand() % (TZ + 1)) * 1000);
 
             sem_wait(postMutex);
-
+            // Kontrola jestli je posta otevrena, pokud ne, zakaznik jde domu
             if ((*closed) == true)
             {
                 sem_post(postMutex);
@@ -193,7 +210,7 @@ int main(int argc, char *argv[]){
 
             sem_post(postMutex);
             
-
+            // Zarazeni do fronty po nahodnem vyberu rady
             if (line == 1)
             {
                 sem_wait(mutex);
@@ -219,6 +236,8 @@ int main(int argc, char *argv[]){
                 sem_post(rada3);
             }
 
+            // Cekani na zavolani urednikem, vyrizeni a odchod domu
+
             sem_wait(urednik);
 
             custom_print("Z %d: called by office worker\n", i);
@@ -228,10 +247,16 @@ int main(int argc, char *argv[]){
             fclose(outputStream);
             exit(0);
         }
+        else if (idZ == -1)
+        {
+            fprintf(stderr, "Error: Fork failed.\n");
+            semaphore_clear();
+            shared_items_clear();
+            return 1;
+        }
     }
 
-    // Vytvor NU procesu uredniku
-
+    // Vytvoreni NU procesu uredniku
     for (int i = 1; i <= NU; i++)
     {
         pid_t idU = fork();
@@ -242,12 +267,14 @@ int main(int argc, char *argv[]){
 
             custom_print("U %d: started\n", i);
 
+            // Dokud posta neni zavrena nebo v nejake rade nekdo je, cyklus bezi 
             while (((*closed) == false) || ((*rada1_waiting) != 0) || ((*rada2_waiting) != 0) || ((*rada3_waiting) != 0))
             {
                 int choice = rand() % 3 + 1;
                 bool valid_choice = false;
 
                 sem_wait(mutex);
+                // Nahodny vyber z nepradne rady
                 while (!valid_choice)
                 {
                     if (choice == 1 && (*rada1_waiting) > 0)
@@ -270,15 +297,17 @@ int main(int argc, char *argv[]){
                         choice = rand() % 3 + 1;
                         sem_post(mutex);
 
+                        // Pokud jsou vsechny rady prazdne, ukonci vyber
                         if ((*rada1_waiting) == 0 && (*rada2_waiting) == 0 && (*rada3_waiting) == 0)
                         {
                             choice = 0;
-                            sem_post(mutex);
                             break;
                         }
                     }
                 }
-                
+
+                // Pokud nikdo neni ve fronte, probehne kontrola, jestli je posta zavrena
+                // Pokud ano, break z whilu, pokud ne, jde urednik na prestavku 
                 if (choice == 0)
                 {
                     sem_wait(postMutex);
@@ -286,9 +315,9 @@ int main(int argc, char *argv[]){
                     {
                         custom_print("U %d: taking break\n", i);
                         sem_post(postMutex);
-                        if(TU != 0)
+                        if(TU != 0) // pokud delka pauzy je 0, nema tento usleep smysl
                         {
-                            usleep((rand() % TU + 1) * 1000);
+                            usleep((rand() % (TU + 1)) * 1000);
                         }
                         custom_print("U %d: break finished\n", i);
                     }
@@ -299,6 +328,7 @@ int main(int argc, char *argv[]){
                     } 
                 }
 
+                // Jinak probiha podle vyberu fronty ukon se zakaznikem
                 else if (choice == 1)
                 {
                     sem_wait(mutex);
@@ -344,6 +374,13 @@ int main(int argc, char *argv[]){
             custom_print("U %d: going home\n", i);
             fclose(outputStream);
             exit(0);
+        }
+        else if (idU == -1)
+        {
+            fprintf(stderr, "Error: Fork failed.\n");
+            semaphore_clear();
+            shared_items_clear();
+            return 1;
         }
     }
     Barrier(NU, NZ);
